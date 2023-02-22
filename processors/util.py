@@ -6,7 +6,6 @@ import logging
 import torch.distributed
 from torch.utils.data import TensorDataset
 from .base_processor import InputFeatures
-from .cluener_processor import CluenerProcessor
 from utils.loader import flexible_loader
 
 logger = logging.getLogger()
@@ -103,7 +102,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
         assert len(label_ids) == max_seq_length
-        if ex_index < 5:
+        if ex_index < 1:
             logger.info("*** Example ***")
             logger.info("guid: %s", example.guid)
             logger.info("tokens: %s", " ".join([str(x) for x in tokens]))
@@ -118,8 +117,6 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
 
 
 def load_and_cache_examples(args, task, tokenizer, data_type="train"):
-    if args.local_rank not in [-1, 0]:
-        torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
     processor = flexible_loader(f"processors.{task}_processor")()
     processor.data_preprocess(args.data_dir)
     # Load data features from cache or dataset file
@@ -155,11 +152,9 @@ def load_and_cache_examples(args, task, tokenizer, data_type="train"):
                                                 pad_token=tokenizer.convert_tokens_to_ids([tokenizer.pad_token])[0],
                                                 pad_token_segment_id=4 if args.model_type in ["xlnet"] else 0,
                                                 )
-        if args.local_rank in [-1, 0]:
-            logger.info("Saving features into cached file %s", cached_features_file)
-            torch.save(features, cached_features_file)
-    if args.local_rank == 0:
-        torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
+        logger.info("Saving features into cached file %s", cached_features_file)
+        torch.save(features, cached_features_file)
+
     # Convert to Tensors and build dataset
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)

@@ -26,7 +26,7 @@ class Daily2014Processor(DataProcessor):
 
     def get_labels(self):
         """See base class."""
-        return ["B-PER", "I-PER", "B-T", "I-T", "B-ORG", "I-ORG", "B-LOC", "I-LOC", "O"]
+        return ["X", "B-PER", "I-PER", "B-T", "I-T", "B-ORG", "I-ORG", "B-LOC", "I-LOC", "O"]
 
     @classmethod
     def _create_examples(cls, lines, set_type):
@@ -54,8 +54,8 @@ class Daily2014Processor(DataProcessor):
         train_datapath = os.path.join(data_dir, "train.json")
         dev_datapath = os.path.join(data_dir, "dev.json")
 
-        # if os.path.exists(train_datapath) and os.path.exists(dev_datapath):
-        #     return
+        if os.path.exists(train_datapath) and os.path.exists(dev_datapath):
+            return
 
         targets, sentences = [], []
         raw_source = os.path.join(data_dir, "source_BIO_2014_corpus.txt")
@@ -70,18 +70,18 @@ class Daily2014Processor(DataProcessor):
                 sentences.append(chars)
 
         train, valid = train_val_split(sentences, targets)
-        train = train[:10000]
+
         with open(train_datapath, "w") as fw:
             for sent, label in train:
                 df = {"words": sent, "labels": label}
-                encode_json = json.dumps(df)
+                encode_json = json.dumps(df, ensure_ascii=False)
                 print(encode_json, file=fw)
             logger.info("Train data write done")
 
         with open(dev_datapath, 'w') as fw:
             for sent, label in valid:
                 df = {"words": sent, "labels": label}
-                encode_json = json.dumps(df)
+                encode_json = json.dumps(df, ensure_ascii=False)
                 print(encode_json, file=fw)
             logger.info("Dev data write done")
 

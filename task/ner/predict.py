@@ -7,7 +7,6 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Tenso
 from torch.utils.data.distributed import DistributedSampler
 from processors.util import load_and_cache_examples, collate_fn
 from utils.progressbar import ProgressBar
-from metrics.get_entity import get_entities
 from utils.common import json_to_text
 
 
@@ -16,11 +15,11 @@ logger = logging.getLogger()
 
 def predict(args, model, tokenizer, prefix=""):
     pred_output_dir = args.output_dir
-    if not os.path.exists(pred_output_dir) and args.local_rank in [-1, 0]:
+    if not os.path.exists(pred_output_dir):
         os.makedirs(pred_output_dir)
     test_dataset = load_and_cache_examples(args, args.task_name, tokenizer, data_type="test")
     # Note that DistributedSampler samples randomly
-    test_sampler = SequentialSampler(test_dataset) if args.local_rank == -1 else DistributedSampler(test_dataset)
+    test_sampler = SequentialSampler(test_dataset)
     test_dataloader = DataLoader(test_dataset, sampler=test_sampler, batch_size=1, collate_fn=collate_fn)
     # Eval!
     logger.info("***** Running prediction %s *****", prefix)

@@ -1,4 +1,4 @@
-TASK_NAME="daily2014"
+TASK_NAME="ccf2020"
 CURRENT_DIR=$(pwd)
 export BERT_BASE_DIR=$CURRENT_DIR/models/pretrained_bert/bert-base-chinese
 export DATASET_DIR=$CURRENT_DIR/datasets/$TASK_NAME
@@ -14,13 +14,13 @@ python "$EXEC_FILE" \
   --do_lower_case \
   --markup="bio" \
   --data_dir="$DATASET_DIR" \
-  --train_max_seq_length=256 \
+  --train_max_seq_length=512 \
   --eval_max_seq_length=512 \
-  --per_gpu_train_batch_size=16 \
-  --per_gpu_eval_batch_size=16 \
+  --per_gpu_train_batch_size=6 \
+  --per_gpu_eval_batch_size=6 \
   --learning_rate=3e-5 \
   --num_train_epochs=5.0 \
   --output_dir="$OUTPUT_DIR"/$TASK_NAME/ \
-  --overwrite_output_dir \
   --image_dir="$IMAGE_DIR"/$TASK_NAME/ \
-  --seed=42
+  --overwrite_output_dir \
+  --seed=42 \

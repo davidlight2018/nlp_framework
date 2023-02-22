@@ -14,9 +14,11 @@ def get_argparse():
                         help="Path to pre-trained model or shortcut name selected in the list: ")
     parser.add_argument("--output_dir", default=None, type=str, required=True,
                         help="The output directory where the model predictions and checkpoints will be written.", )
+    parser.add_argument("--image_dir", default=None, type=str, required=True,
+                        help="The output directory where the images will be written.", )
 
     # Other parameters
-    parser.add_argument('--markup', default='bios', type=str,
+    parser.add_argument('--markup', default='bio', type=str,
                         choices=['bios', 'bio'])
     parser.add_argument('--loss_type', default='ce', type=str,
                         choices=['lsr', 'focal', 'ce'])
@@ -91,7 +93,4 @@ def get_argparse():
     parser.add_argument("--fp16_opt_level", type=str, default="O1",
                         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
                              "See details at https://nvidia.github.io/apex/amp.html", )
-    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
-    parser.add_argument("--server_ip", type=str, default="", help="For distant debugging.")
-    parser.add_argument("--server_port", type=str, default="", help="For distant debugging.")
     return parser

@@ -8,6 +8,7 @@ from transformers import AdamW, get_linear_schedule_with_warmup
 from processors.util import collate_fn
 from utils.progressbar import ProgressBar
 from utils.common import seed_everything
+from utils.plot import loss_acc_plot
 from .evaluate import evaluate
 
 
@@ -16,8 +17,8 @@ logger = logging.getLogger()
 
 def train(args, train_dataset, model, tokenizer):
     """ Train the model """
-    args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
-    train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
+    args.train_batch_size = args.per_gpu_train_batch_size
+    train_sampler = RandomSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size,
                                   collate_fn=collate_fn)
     if args.max_steps > 0:
@@ -62,24 +63,14 @@ def train(args, train_dataset, model, tokenizer):
         except ImportError:
             raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
         model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
-    # multi-gpu training (should be after apex fp16 initialization)
-    if args.n_gpu > 1:
-        model = torch.nn.DataParallel(model)
-    # Distributed training (should be after apex fp16 initialization)
-    if args.local_rank != -1:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
-                                                          output_device=args.local_rank,
-                                                          find_unused_parameters=True)
+
     # Train!
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
     logger.info("  Num Epochs = %d", args.num_train_epochs)
     logger.info("  Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size)
     logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
-                args.train_batch_size
-                * args.gradient_accumulation_steps
-                * (torch.distributed.get_world_size() if args.local_rank != -1 else 1),
-                )
+                args.train_batch_size * args.gradient_accumulation_steps)
     logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logger.info("  Total optimization steps = %d", t_total)
 
@@ -96,10 +87,27 @@ def train(args, train_dataset, model, tokenizer):
         logger.info("  Continuing training from global step %d", global_step)
         logger.info("  Will skip the first %d steps in the first epoch", steps_trained_in_current_epoch)
 
-    tr_loss, logging_loss = 0.0, 0.0
+    tr_loss = 0.0
+    best_eval_f1 = 0.0
+    train_losses = []
+    eval_losses = []
+    train_accuracy = []
+    eval_accuracy = []
+    train_f1 = []
+    eval_f1 = []
+
+    history = {
+        "train_loss": train_losses,
+        "train_acc": train_accuracy,
+        "train_f1": train_f1,
+        "eval_loss": eval_losses,
+        "eval_acc": eval_accuracy,
+        "eval_f1": eval_f1,
+    }
     model.zero_grad()
     seed_everything(args.seed)  # Added here for reproducibility (even between python 2 and 3)
-    for _ in range(int(args.num_train_epochs)):
+    for i_epoch in range(int(args.num_train_epochs)):
+        logger.info("  Doing training in epoch %d", i_epoch)
         pbar = ProgressBar(n_total=len(train_dataloader), desc='Training')
         for step, batch in enumerate(train_dataloader):
             # Skip past any already trained steps if resuming training
@@ -114,8 +122,7 @@ def train(args, train_dataset, model, tokenizer):
                 inputs["token_type_ids"] = (batch[2] if args.model_type in ["bert", "xlnet"] else None)
             outputs = model(**inputs)
             loss = outputs[0]  # model outputs are always tuple in pytorch-transformers (see doc)
-            if args.n_gpu > 1:
-                loss = loss.mean()  # mean() to average on multi-gpu parallel training
+
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
             if args.fp16:
@@ -135,30 +142,43 @@ def train(args, train_dataset, model, tokenizer):
                 scheduler.step()  # Update learning rate schedule
                 model.zero_grad()
                 global_step += 1
-                # if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
-                if args.local_rank in [-1, 0] and global_step % len(train_dataloader) == 0:
+                if global_step % len(train_dataloader) == 0:
                     # Log metrics
-                    print(" ")
-                    if args.local_rank == -1:
-                        # Only evaluate when single GPU otherwise metrics may not average well
-                        evaluate(args, model, tokenizer)
-                # if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
-                if args.local_rank in [-1, 0] and global_step % len(train_dataloader) == 0:
-                    # Save model checkpoint
-                    output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(global_step))
-                    if not os.path.exists(output_dir):
-                        os.makedirs(output_dir)
-                    model_to_save = (
-                        model.module if hasattr(model, "module") else model
-                    )  # Take care of distributed/parallel training
-                    # model_to_save.save_pretrained(output_dir)
-                    # torch.save(args, os.path.join(output_dir, "training_args.bin"))
-                    # logger.info("Saving model checkpoint to %s", output_dir)
-                    # tokenizer.save_vocabulary(output_dir)
-                    # torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
-                    # torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
-                    # logger.info("Saving optimizer and scheduler states to %s", output_dir)
-        logger.info("\n")
+                    print("")
+                    train_report, train_loss = evaluate(args, model, tokenizer, data_type="train")
+                    eval_report, eval_loss = evaluate(args, model, tokenizer)
+                    train_acc_score = train_report["micro avg"]["precision"]
+                    train_f1_score = train_report["micro avg"]["f1-score"]
+                    eval_acc_score = eval_report["micro avg"]["precision"]
+                    eval_f1_score = eval_report["micro avg"]["f1-score"]
+                    print("loss compare", train_loss, loss.item())
+                    train_losses.append(loss.item())
+                    train_accuracy.append(train_acc_score)
+                    train_f1.append(train_f1_score)
+                    eval_losses.append(eval_loss)
+                    eval_accuracy.append(eval_acc_score)
+                    eval_f1.append(eval_f1_score)
+
+                    if eval_f1_score > best_eval_f1:
+                        best_eval_f1 = eval_f1_score
+
+                        # Save model checkpoint
+                        output_dir = os.path.join(args.output_dir, "checkpoint-{}-{}".format(
+                            global_step, round(eval_f1_score, 4)))
+                        os.makedirs(output_dir, exist_ok=True)
+                        model_to_save = (
+                            model.module if hasattr(model, "module") else model
+                        )  # Take care of distributed/parallel training
+                        model_to_save.save_pretrained(output_dir)
+                        torch.save(args, os.path.join(output_dir, "training_args.bin"))
+                        logger.info("Saving model checkpoint to %s", output_dir)
+                        tokenizer.save_vocabulary(output_dir)
+                        torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
+                        torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
+                        logger.info("Saving optimizer and scheduler states to %s", output_dir)
+
         if 'cuda' in str(args.device):
             torch.cuda.empty_cache()
+
+    loss_acc_plot(args, history)
     return global_step, tr_loss / global_step
